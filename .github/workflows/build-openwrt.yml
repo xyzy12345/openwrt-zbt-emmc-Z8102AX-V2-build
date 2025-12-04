@@ -1,0 +1,84 @@
+name: Build OpenWrt for ZBT-Z8102AX (eMMC+5G)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+
+    steps:
+    - name: 1. Checkout OpenWrt source
+      uses: actions/checkout@v4
+      with:
+        repository: openwrt/openwrt
+        ref: master
+
+    - name: 2. [CORE] Patch for eMMC version
+      run: |
+        cp target/linux/mediatek/image/mt7981.mk target/linux/mediatek/image/mt7981.mk.backup
+        sed -i '/define Device\/zbtlink_zbt-z8102ax/,/^endef/ {
+          /KERNEL_CMDLINE/d
+          /^endef/i \  KERNEL_CMDLINE := earlycon=uart8250,mmio32,0x11002000 console=ttyS0,115200n8 root=PARTLABEL=rootfs rootfstype=squashfs,f2fs
+        }' target/linux/mediatek/image/mt7981.mk
+        echo "✅ Kernel cmdline injected for eMMC."
+
+    - name: 3. Update and install feeds
+      run: |
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: 4. Load custom configuration
+      run: |
+        cat > .config << 'EOF'
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_mt7981=y
+CONFIG_TARGET_mediatek_mt7981_DEVICE_zbtlink_zbt-z8102ax=y
+
+# eMMC & Storage
+CONFIG_PACKAGE_kmod-mmc=y
+CONFIG_PACKAGE_kmod-fs-ext4=y
+CONFIG_PACKAGE_kmod-fs-f2fs=y
+
+# USB & 5G Modem
+CONFIG_PACKAGE_kmod-usb-core=y
+CONFIG_PACKAGE_kmod-usb3=y
+CONFIG_PACKAGE_kmod-usb-net=y
+CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+CONFIG_PACKAGE_kmod-usb-serial-option=y
+CONFIG_PACKAGE_kmod-usb-net-rndis=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
+
+# Tools & Management
+CONFIG_PACKAGE_uqmi=y
+CONFIG_PACKAGE_usbutils=y
+CONFIG_PACKAGE_modemmanager=y
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-proto-modemmanager=y
+
+# System Basics
+CONFIG_PACKAGE_dnsmasq=y
+CONFIG_PACKAGE_firewall4=y
+CONFIG_PACKAGE_opkg=y
+CONFIG_PACKAGE_procd-ujail=y
+CONFIG_PACKAGE_uboot-envtools=y
+EOF
+        make defconfig
+
+    - name: 5. Download packages
+      run: make download -j$(nproc)
+      timeout-minutes: 90
+
+    - name: 6. Build firmware
+      run: make -j$(nproc) V=s
+      timeout-minutes: 180
+
+    - name: 7. Upload firmware artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: firmware-zbt-z8102ax-emmc-5g
+        path: bin/targets/mediatek/mt7981/
+        retention-days: 30
