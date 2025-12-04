@@ -19,6 +19,9 @@ jobs:
 
     - name: 2. [CORE] Patch for eMMC version
       run: |
+        # 确保在正确的目录中
+        cd ${{ github.workspace }}
+        
         cp target/linux/mediatek/image/mt7981.mk target/linux/mediatek/image/mt7981.mk.backup
         sed -i '/define Device\/zbtlink_zbt-z8102ax/,/^endef/ {
           /KERNEL_CMDLINE/d
@@ -28,11 +31,13 @@ jobs:
 
     - name: 3. Update and install feeds
       run: |
+        cd ${{ github.workspace }}
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
     - name: 4. Apply minimal configuration
       run: |
+        cd ${{ github.workspace }}
         # 生成默认配置
         make defconfig
         
@@ -59,16 +64,20 @@ jobs:
         make defconfig
 
     - name: 5. Download packages
-      run: make download -j$(nproc)
+      run: |
+        cd ${{ github.workspace }}
+        make download -j$(nproc)
       timeout-minutes: 60
 
     - name: 6. Build firmware
-      run: make -j$(nproc) V=s
+      run: |
+        cd ${{ github.workspace }}
+        make -j$(nproc) V=s
       timeout-minutes: 120
 
     - name: 7. Upload firmware artifact
       uses: actions/upload-artifact@v4
       with:
         name: openwrt-zbt-z8102ax-emmc-base
-        path: bin/targets/mediatek/mt7981/
+        path: ${{ github.workspace }}/bin/targets/mediatek/mt7981/
         retention-days: 30
