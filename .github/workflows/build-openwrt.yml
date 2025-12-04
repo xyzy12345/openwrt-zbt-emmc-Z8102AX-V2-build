@@ -1,4 +1,4 @@
-name: Build OpenWrt for ZBT-Z8102AX (eMMC+5G)
+name: Build OpenWrt for ZBT-Z8102AX (eMMC Base)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 240
+    timeout-minutes: 180
 
     steps:
     - name: 1. Checkout OpenWrt source
@@ -24,61 +24,51 @@ jobs:
           /KERNEL_CMDLINE/d
           /^endef/i \  KERNEL_CMDLINE := earlycon=uart8250,mmio32,0x11002000 console=ttyS0,115200n8 root=PARTLABEL=rootfs rootfstype=squashfs,f2fs
         }' target/linux/mediatek/image/mt7981.mk
-        echo "✅ Kernel cmdline injected for eMMC."
+        echo "✅ eMMC启动参数已注入"
 
     - name: 3. Update and install feeds
       run: |
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: 4. Load custom configuration
+    - name: 4. Apply minimal configuration
       run: |
-        cat > .config << 'CONFIG_EOF'
-CONFIG_TARGET_mediatek=y
-CONFIG_TARGET_mediatek_mt7981=y
-CONFIG_TARGET_mediatek_mt7981_DEVICE_zbtlink_zbt-z8102ax=y
-
-# eMMC & Storage
-CONFIG_PACKAGE_kmod-mmc=y
-CONFIG_PACKAGE_kmod-fs-ext4=y
-CONFIG_PACKAGE_kmod-fs-f2fs=y
-
-# USB & 5G Modem
-CONFIG_PACKAGE_kmod-usb-core=y
-CONFIG_PACKAGE_kmod-usb3=y
-CONFIG_PACKAGE_kmod-usb-net=y
-CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
-CONFIG_PACKAGE_kmod-usb-serial-option=y
-CONFIG_PACKAGE_kmod-usb-net-rndis=y
-CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
-
-# Tools & Management
-CONFIG_PACKAGE_uqmi=y
-CONFIG_PACKAGE_usbutils=y
-CONFIG_PACKAGE_modemmanager=y
-CONFIG_PACKAGE_luci=y
-CONFIG_PACKAGE_luci-proto-modemmanager=y
-
-# System Basics
-CONFIG_PACKAGE_dnsmasq=y
-CONFIG_PACKAGE_firewall4=y
-CONFIG_PACKAGE_opkg=y
-CONFIG_PACKAGE_procd-ujail=y
-CONFIG_PACKAGE_uboot-envtools=y
-CONFIG_EOF
+        # 生成默认配置
+        make defconfig
+        
+        # 应用精简配置
+        echo "CONFIG_TARGET_mediatek=y" > .config
+        echo "CONFIG_TARGET_mediatek_mt7981=y" >> .config
+        echo "CONFIG_TARGET_mediatek_mt7981_DEVICE_zbtlink_zbt-z8102ax=y" >> .config
+        
+        # eMMC基础支持
+        echo "CONFIG_PACKAGE_kmod-mmc=y" >> .config
+        echo "CONFIG_PACKAGE_kmod-fs-f2fs=y" >> .config
+        
+        # 基本系统
+        echo "CONFIG_PACKAGE_luci=y" >> .config
+        echo "CONFIG_PACKAGE_luci-proto-ppp=y" >> .config
+        echo "CONFIG_PACKAGE_luci-app-opkg=y" >> .config
+        
+        # 网络基础
+        echo "CONFIG_PACKAGE_dnsmasq=y" >> .config
+        echo "CONFIG_PACKAGE_firewall4=y" >> .config
+        echo "CONFIG_PACKAGE_opkg=y" >> .config
+        
+        # 应用配置
         make defconfig
 
     - name: 5. Download packages
       run: make download -j$(nproc)
-      timeout-minutes: 90
+      timeout-minutes: 60
 
     - name: 6. Build firmware
       run: make -j$(nproc) V=s
-      timeout-minutes: 180
+      timeout-minutes: 120
 
     - name: 7. Upload firmware artifact
       uses: actions/upload-artifact@v4
       with:
-        name: firmware-zbt-z8102ax-emmc-5g
+        name: openwrt-zbt-z8102ax-emmc-base
         path: bin/targets/mediatek/mt7981/
         retention-days: 30
