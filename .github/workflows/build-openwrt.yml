@@ -15,18 +15,28 @@ jobs:
       uses: actions/checkout@v4
       with:
         repository: openwrt/openwrt
-        ref: master
+        ref: openwrt-24.10.4  # 使用稳定版本！
 
     - name: 2. [CORE] Patch for eMMC version
       run: |
-        # 确保在正确的目录中
+        # 进入源码目录
         cd ${{ github.workspace }}
         
-        cp target/linux/mediatek/image/mt7981.mk target/linux/mediatek/image/mt7981.mk.backup
+        # 先检查文件是否存在
+        echo "检查目录结构..."
+        find . -name "*zbt*" -type f | head -20
+        ls -la target/linux/mediatek/
+        
+        # 根据你查到的官方路径，设备应该在 filogic 目录
+        # 备份原文件
+        cp target/linux/mediatek/filogic/image/mt7981.mk target/linux/mediatek/filogic/image/mt7981.mk.backup
+        
+        # 修正eMMC启动参数
         sed -i '/define Device\/zbtlink_zbt-z8102ax/,/^endef/ {
           /KERNEL_CMDLINE/d
           /^endef/i \  KERNEL_CMDLINE := earlycon=uart8250,mmio32,0x11002000 console=ttyS0,115200n8 root=PARTLABEL=rootfs rootfstype=squashfs,f2fs
-        }' target/linux/mediatek/image/mt7981.mk
+        }' target/linux/mediatek/filogic/image/mt7981.mk
+        
         echo "✅ eMMC启动参数已注入"
 
     - name: 3. Update and install feeds
@@ -41,10 +51,10 @@ jobs:
         # 生成默认配置
         make defconfig
         
-        # 应用精简配置
+        # 应用精简配置 - 使用正确的目标
         echo "CONFIG_TARGET_mediatek=y" > .config
-        echo "CONFIG_TARGET_mediatek_mt7981=y" >> .config
-        echo "CONFIG_TARGET_mediatek_mt7981_DEVICE_zbtlink_zbt-z8102ax=y" >> .config
+        echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
+        echo "CONFIG_TARGET_mediatek_filogic_DEVICE_zbtlink_zbt-z8102ax=y" >> .config
         
         # eMMC基础支持
         echo "CONFIG_PACKAGE_kmod-mmc=y" >> .config
@@ -79,5 +89,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: openwrt-zbt-z8102ax-emmc-base
-        path: ${{ github.workspace }}/bin/targets/mediatek/mt7981/
+        path: ${{ github.workspace }}/bin/targets/mediatek/filogic/
         retention-days: 30
