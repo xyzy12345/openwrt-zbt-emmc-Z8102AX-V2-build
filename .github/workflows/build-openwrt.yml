@@ -1,0 +1,153 @@
+name: Build OpenWrt for ZBT-Z8102AX (eMMC+5G)
+
+on:
+  workflow_dispatch:    # 手动触发
+  push:
+    paths:
+      - '.github/workflows/build-openwrt.yml'
+      - 'custom-config/**'    # 可添加自定义配置目录
+    branches: [ main ]
+
+env:
+  TARGET: mediatek
+  SUBTARGET: mt7981
+  PROFILE: zbtlink_zbt-z8102ax
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    
+    steps:
+    - name: 1. 检出OpenWrt源码
+      uses: actions/checkout@v4
+      with:
+        repository: openwrt/openwrt
+        ref: master
+        path: openwrt
+        
+    - name: 2. 进入工作目录
+      run: cd openwrt
+      
+    - name: 3. [核心] 注入eMMC启动参数
+      run: |
+        # 备份原配置文件
+        cp target/linux/mediatek/image/mt7981.mk target/linux/mediatek/image/mt7981.mk.backup
+        
+        # 替换内核命令行，指定eMMC分区
+        sed -i '/define Device\/zbtlink_zbt-z8102ax/,/^endef/ {
+          /KERNEL_CMDLINE/d
+          /^endef/i \  KERNEL_CMDLINE := earlycon=uart8250,mmio32,0x11002000 console=ttyS0,115200n8 root=PARTLABEL=rootfs rootfstype=squashfs,f2fs
+        }' target/linux/mediatek/image/mt7981.mk
+        
+        echo "✅ eMMC启动参数已注入：root=PARTLABEL=rootfs"
+        
+    - name: 4. 更新并安装软件源
+      run: |
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        
+    - name: 5. 应用自定义配置
+      run: |
+        # 生成最小化配置
+        make defconfig
+        
+        # 应用我们的定制配置
+        cat >> .config << 'EOF'
+# 目标设备
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_mt7981=y
+CONFIG_TARGET_mediatek_mt7981_DEVICE_zbtlink_zbt-z8102ax=y
+
+# ===== eMMC存储支持 =====
+CONFIG_PACKAGE_kmod-mmc=y
+CONFIG_PACKAGE_kmod-mtk-mmc=y
+CONFIG_PACKAGE_kmod-fs-ext4=y
+CONFIG_PACKAGE_kmod-fs-f2fs=y
+CONFIG_PACKAGE_f2fs-tools=y
+CONFIG_PACKAGE_f2fsck=y
+CONFIG_PACKAGE_block-mount=y
+
+# ===== USB 5G模组全套支持 =====
+CONFIG_PACKAGE_kmod-usb-core=y
+CONFIG_PACKAGE_kmod-usb2=y
+CONFIG_PACKAGE_kmod-usb3=y
+CONFIG_PACKAGE_kmod-usb-net=y
+
+# QMI协议（高通模组如RM500Q）
+CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+
+# MBIM协议（部分5G模组）
+CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
+
+# RNDIS协议（备用）
+CONFIG_PACKAGE_kmod-usb-net-rndis=y
+
+# USB串口支持
+CONFIG_PACKAGE_kmod-usb-serial=y
+CONFIG_PACKAGE_kmod-usb-serial-option=y
+CONFIG_PACKAGE_kmod-usb-serial-wwan=y
+
+# ===== 5G管理工具 =====
+CONFIG_PACKAGE_uqmi=y          # QMI命令行工具
+CONFIG_PACKAGE_modemmanager=y  # 自动识别管理模组
+CONFIG_PACKAGE_comgt-ncm=y     # NCM协议支持
+CONFIG_PACKAGE_comgt=y
+
+# ===== 网络基础 =====
+CONFIG_PACKAGE_dnsmasq=y
+CONFIG_PACKAGE_firewall4=y
+CONFIG_PACKAGE_opkg=y
+CONFIG_PACKAGE_procd-ujail=y
+
+# ===== Luci管理界面 =====
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-base=y
+CONFIG_PACKAGE_luci-mod-admin-full=y
+CONFIG_PACKAGE_luci-theme-bootstrap=y
+CONFIG_PACKAGE_luci-proto-modemmanager=y  # 5G接口支持
+CONFIG_PACKAGE_luci-app-firewall=y
+CONFIG_PACKAGE_luci-app-opkg=y
+
+# ===== 实用工具 =====
+CONFIG_PACKAGE_usbutils=y      # lsusb等工具
+CONFIG_PACKAGE_uboot-envtools=y
+CONFIG_PACKAGE_iperf3=y
+CONFIG_PACKAGE_tcpdump=y
+
+# 中文支持（可选）
+CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+EOF
+        
+        # 使配置生效
+        make defconfig
+        
+    - name: 6. 可选：交互式配置（注释掉则为全自动）
+      run: |
+        # 如需自定义包，取消注释下行
+        # make menuconfig
+        echo "跳过交互配置，使用预设配置"
+        
+    - name: 7. 下载所有依赖包
+      run: make download -j$(nproc)
+      timeout-minutes: 90
+      
+    - name: 8. 开始编译固件
+      run: make -j$(($(nproc)+1)) V=s 2>&1 | tee build.log
+      timeout-minutes: 180
+      
+    - name: 9. 上传固件制品
+      uses: actions/upload-artifact@v4
+      with:
+        name: openwrt-zbt-z8102ax-emmc-5g
+        path: |
+          openwrt/bin/targets/mediatek/mt7981/*.bin
+          openwrt/bin/targets/mediatek/mt7981/*.manifest
+          openwrt/build.log
+        retention-days: 30
+        
+    - name: 10. 编译成功通知（可选）
+      if: success()
+      run: |
+        echo "🎉 固件编译成功！"
+        echo "在Artifacts区域下载固件：openwrt-zbt-z8102ax-emmc-5g"
