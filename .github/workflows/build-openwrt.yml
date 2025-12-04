@@ -33,7 +33,7 @@ jobs:
 
     - name: 4. Load custom configuration
       run: |
-        cat > .config << 'EOF'
+        cat > .config << 'CONFIG_EOF'
 CONFIG_TARGET_mediatek=y
 CONFIG_TARGET_mediatek_mt7981=y
 CONFIG_TARGET_mediatek_mt7981_DEVICE_zbtlink_zbt-z8102ax=y
@@ -65,7 +65,7 @@ CONFIG_PACKAGE_firewall4=y
 CONFIG_PACKAGE_opkg=y
 CONFIG_PACKAGE_procd-ujail=y
 CONFIG_PACKAGE_uboot-envtools=y
-EOF
+CONFIG_EOF
         make defconfig
 
     - name: 5. Download packages
