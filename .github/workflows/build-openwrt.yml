@@ -15,32 +15,38 @@ jobs:
       uses: actions/checkout@v4
       with:
         repository: openwrt/openwrt
-        ref: v24.10.4  # ✅ 注意：必须是 v24.10.4，不是 openwrt-24.10.4！
+        ref: v24.10.4
 
-    - name: 2. [CORE] Patch for eMMC version
+    - name: 2. [CORE] Find and patch device configuration
       run: |
-        # 进入源码目录
         cd ${{ github.workspace }}
         
-        # 先检查目录结构
-        echo "=== 检查目标目录结构 ==="
-        find target/linux/mediatek/ -name "*zbt*" 2>/dev/null || echo "未找到zbt相关文件"
-        echo "=== 检查filogic目录 ==="
-        ls -la target/linux/mediatek/filogic/ 2>/dev/null || echo "filogic目录不存在"
-        echo "=== 检查mt7981文件 ==="
-        find target/linux/ -name "mt7981.mk" 2>/dev/null || echo "未找到mt7981.mk"
+        echo "=== 搜索包含 zbtlink_zbt-z8102ax 的 .mk 文件 ==="
+        # 搜索整个 target/linux/mediatek 目录
+        FILE_PATH=$(grep -r "zbtlink_zbt-z8102ax" target/linux/mediatek/ --include="*.mk" | head -1 | cut -d: -f1)
         
-        # 根据找到的文件路径进行修改
-        if [ -f "target/linux/mediatek/filogic/image/mt7981.mk" ]; then
-          FILE_PATH="target/linux/mediatek/filogic/image/mt7981.mk"
-        elif [ -f "target/linux/mediatek/mt7981/image/mt7981.mk" ]; then
-          FILE_PATH="target/linux/mediatek/mt7981/image/mt7981.mk"
-        else
-          echo "❌ 找不到mt7981.mk文件"
-          exit 1
+        if [ -z "$FILE_PATH" ]; then
+          echo "未找到包含 zbtlink_zbt-z8102ax 的 .mk 文件，尝试搜索 mt798x.mk"
+          # 尝试查找 mt798x.mk
+          if [ -f "target/linux/mediatek/image/mt798x.mk" ]; then
+            FILE_PATH="target/linux/mediatek/image/mt798x.mk"
+            echo "找到 mt798x.mk 文件"
+          else
+            echo "=== 列出所有可能的 .mk 文件 ==="
+            find target/linux/mediatek/image/ -name "*.mk" -type f
+            echo "=== 查看 mt7981b-zbtlink-zbt-z8102ax.dts 中的定义 ==="
+            head -50 target/linux/mediatek/dts/mt7981b-zbtlink-zbt-z8102ax.dts
+            echo "❌ 找不到设备配置文件，请检查路径"
+            exit 1
+          fi
         fi
         
-        echo "找到配置文件: $FILE_PATH"
+        echo "✅ 找到配置文件: $FILE_PATH"
+        
+        # 查看文件内容确认
+        echo "=== 查看文件中 zbtlink_zbt-z8102ax 相关定义 ==="
+        grep -A 20 -B 5 "define Device/zbtlink_zbt-z8102ax" "$FILE_PATH" || echo "未找到定义，查看文件开头"
+        head -30 "$FILE_PATH"
         
         # 备份原文件
         cp "$FILE_PATH" "${FILE_PATH}.backup"
@@ -52,5 +58,60 @@ jobs:
         }' "$FILE_PATH"
         
         echo "✅ eMMC启动参数已注入到 $FILE_PATH"
+        
+        # 验证修改
+        echo "=== 验证修改后的定义 ==="
+        grep -A 15 "define Device/zbtlink_zbt-z8102ax" "$FILE_PATH"
 
-    # ... 后续步骤保持不变 ...
+    - name: 3. Update and install feeds
+      run: |
+        cd ${{ github.workspace }}
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: 4. Apply minimal configuration
+      run: |
+        cd ${{ github.workspace }}
+        # 生成默认配置
+        make defconfig
+        
+        # 应用精简配置 - 注意：根据官方固件路径，可能是 filogic
+        echo "CONFIG_TARGET_mediatek=y" > .config
+        echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
+        echo "CONFIG_TARGET_mediatek_filogic_DEVICE_zbtlink_zbt-z8102ax=y" >> .config
+        
+        # eMMC基础支持
+        echo "CONFIG_PACKAGE_kmod-mmc=y" >> .config
+        echo "CONFIG_PACKAGE_kmod-fs-f2fs=y" >> .config
+        
+        # 基本系统
+        echo "CONFIG_PACKAGE_luci=y" >> .config
+        echo "CONFIG_PACKAGE_luci-proto-ppp=y" >> .config
+        echo "CONFIG_PACKAGE_luci-app-opkg=y" >> .config
+        
+        # 网络基础
+        echo "CONFIG_PACKAGE_dnsmasq=y" >> .config
+        echo "CONFIG_PACKAGE_firewall4=y" >> .config
+        echo "CONFIG_PACKAGE_opkg=y" >> .config
+        
+        # 应用配置
+        make defconfig
+
+    - name: 5. Download packages
+      run: |
+        cd ${{ github.workspace }}
+        make download -j$(nproc)
+      timeout-minutes: 60
+
+    - name: 6. Build firmware
+      run: |
+        cd ${{ github.workspace }}
+        make -j$(nproc) V=s
+      timeout-minutes: 120
+
+    - name: 7. Upload firmware artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: openwrt-zbt-z8102ax-emmc-base
+        path: ${{ github.workspace }}/bin/targets/mediatek/filogic/
+        retention-days: 30
